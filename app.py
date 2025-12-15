@@ -1,11 +1,27 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score
+
+# Import các hàm logic từ utils
+from utils import (
+    load_data,
+    get_numeric_columns,
+    get_default_features,
+    preprocess_data,
+    calculate_elbow_method,
+    train_kmeans,
+    add_cluster_labels_to_df,
+    calculate_cluster_statistics,
+    calculate_global_averages,
+    identify_trend_cluster,
+    get_cluster_label,
+    get_dominant_category,
+    get_cluster_feature_stats,
+    get_category_distribution,
+    prepare_download_data
+)
 
 # ===========================
 # CẤU HÌNH TRANG WEB
@@ -39,23 +55,22 @@ uploaded_file = st.sidebar.file_uploader(
 if uploaded_file is not None:
     # Đọc dữ liệu từ file CSV
     try:
-        df = pd.read_csv(uploaded_file)
+        df = load_data(uploaded_file)
         st.sidebar.success("✅ Tải file thành công!")
         
         # 2. Chọn các đặc trưng số để phân cụm
         st.sidebar.subheader("2. Chọn Đặc Trưng")
         
         # Tự động phát hiện các cột số trong dataset
-        numeric_columns = df.select_dtypes(include=[np.number]).columns.tolist()
+        numeric_columns = get_numeric_columns(df)
         
-        # Đặt mặc định là quantity, n_review, avg_rating (nếu có)
-        default_features = [col for col in ['quantity', 'n_review', 'avg_rating'] 
-                           if col in numeric_columns]
+        # Lấy các đặc trưng mặc định
+        default_features = get_default_features(numeric_columns)
         
         selected_features = st.sidebar.multiselect(
             "Chọn các cột số để clustering:",
             options=numeric_columns,
-            default=default_features if default_features else numeric_columns[:3],
+            default=default_features,
             help="Chọn ít nhất 2 đặc trưng để phân cụm"
         )
         
@@ -107,33 +122,18 @@ if uploaded_file is not None:
             # ===========================
             st.header("2️⃣ Tiền Xử Lý Dữ Liệu")
             
-            # Tạo bản copy để xử lý
-            df_processed = df.copy()
-            
             # Hiển thị số lượng giá trị thiếu trước khi xử lý
-            missing_before = df_processed[selected_features].isnull().sum().sum()
+            missing_before = df[selected_features].isnull().sum().sum()
             st.write(f"**Số giá trị thiếu trong các cột đã chọn:** {missing_before}")
             
-            # Xử lý giá trị thiếu - loại bỏ các dòng có giá trị thiếu
-            df_processed = df_processed.dropna(subset=selected_features)
-            missing_after = df_processed[selected_features].isnull().sum().sum()
+            # Tiền xử lý dữ liệu
+            df_processed, X_scaled, scaler, df_scaled, rows_removed = preprocess_data(df, selected_features)
             
-            st.success(f"✅ Đã loại bỏ {df.shape[0] - df_processed.shape[0]} dòng có giá trị thiếu")
+            st.success(f"✅ Đã loại bỏ {rows_removed} dòng có giá trị thiếu")
             st.write(f"**Số dòng còn lại:** {df_processed.shape[0]}")
             
-            # Chuẩn hóa dữ liệu bằng StandardScaler
+            # Chuẩn hóa dữ liệu
             st.subheader("🔄 Chuẩn Hóa Dữ Liệu (StandardScaler)")
-            
-            # Tạo scaler và fit với dữ liệu
-            scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(df_processed[selected_features])
-            
-            # Tạo DataFrame cho dữ liệu đã chuẩn hóa
-            df_scaled = pd.DataFrame(
-                X_scaled,
-                columns=[f"{col}_scaled" for col in selected_features],
-                index=df_processed.index
-            )
             
             col1, col2 = st.columns(2)
             
@@ -156,23 +156,9 @@ if uploaded_file is not None:
             
             st.write("**Elbow Method** giúp xác định số cụm tối ưu bằng cách tính toán Inertia (tổng khoảng cách bình phương)")
             
-            # Tính toán Inertia cho K từ 1 đến 10
-            inertia_values = []
-            silhouette_scores = []
-            K_range = range(1, 11)
-            
+            # Tính toán phương pháp Elbow (đã cache)
             with st.spinner("🔄 Đang tính toán Inertia cho các giá trị K..."):
-                for k in K_range:
-                    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-                    kmeans.fit(X_scaled)
-                    inertia_values.append(kmeans.inertia_)
-                    
-                    # Tính Silhouette Score (chỉ cho k >= 2)
-                    if k >= 2:
-                        score = silhouette_score(X_scaled, kmeans.labels_)
-                        silhouette_scores.append(score)
-                    else:
-                        silhouette_scores.append(0)
+                K_range, inertia_values, silhouette_scores = calculate_elbow_method(X_scaled, k_range=(1, 11))
             
             # Vẽ biểu đồ Elbow
             col1, col2 = st.columns(2)
@@ -208,14 +194,12 @@ if uploaded_file is not None:
             # ===========================
             st.header("4️⃣ Kết Quả Phân Cụm & Trực Quan Hóa")
             
-            # Chạy KMeans với K đã chọn
+            # Huấn luyện KMeans
             with st.spinner(f"🔄 Đang thực hiện phân cụm với K={k_clusters}..."):
-                kmeans_final = KMeans(n_clusters=k_clusters, random_state=42, n_init=10)
-                cluster_labels = kmeans_final.fit_predict(X_scaled)
+                kmeans_final, cluster_labels = train_kmeans(X_scaled, k_clusters)
             
-            # Thêm nhãn cụm vào DataFrame
-            df_processed['Cluster'] = cluster_labels
-            df_processed['Cluster'] = df_processed['Cluster'].astype(str)
+            # Thêm nhãn cụm vào dataframe
+            df_processed = add_cluster_labels_to_df(df_processed, cluster_labels)
             
             # Hiển thị thông tin về các cụm
             st.subheader("📊 Phân Bố Các Cụm")
@@ -227,7 +211,7 @@ if uploaded_file is not None:
                 st.dataframe(
                     pd.DataFrame({
                         'Cụm': cluster_counts.index,
-                        'Số lượng': cluster_counts.values,
+                        'Số lượng phần tử': cluster_counts.values,
                         'Phần trăm': [f"{(v/len(df_processed)*100):.1f}%" for v in cluster_counts.values]
                     }),
                     use_container_width=True
@@ -238,7 +222,7 @@ if uploaded_file is not None:
                 st.metric("Silhouette Score", f"{silhouette_avg:.3f}")
             
             with col2:
-                # Biểu đồ phân bố cụm
+                # Vẽ biểu đồ phân bố cụm
                 fig_bar = px.bar(
                     x=cluster_counts.index,
                     y=cluster_counts.values,
@@ -254,7 +238,7 @@ if uploaded_file is not None:
             # Trực quan hóa 2D
             st.subheader("📈 Trực Quan Hóa 2D - Scatter Plot")
             
-            # Cho phép người dùng chọn trục X và Y
+            # Cho phép người dùng chọn trục X và Y để vẽ
             col1, col2 = st.columns(2)
             
             with col1:
@@ -328,11 +312,124 @@ if uploaded_file is not None:
             # ===========================
             st.subheader("📋 Thống Kê Chi Tiết Theo Cụm")
             
-            # Tính toán thống kê trung bình cho mỗi cụm
-            cluster_stats = df_processed.groupby('Cluster')[selected_features].mean()
-            cluster_stats = cluster_stats.round(2)
-            
+            # Tính toán thống kê theo cụm
+            cluster_stats = calculate_cluster_statistics(df_processed, selected_features)
             st.dataframe(cluster_stats, use_container_width=True)
+            
+            # ===========================
+            # SECTION 5: CLUSTER INTERPRETATION & AUTO-LABELING
+            # ===========================
+            st.markdown("---")
+            st.header("5️⃣ Phân Tích & Gán Nhãn Tự Động Cho Từng Cụm")
+            
+            st.write("**Phân tích tự động** để hiểu đặc điểm của từng nhóm sách và gán nhãn phù hợp.")
+            
+            # Kiểm tra xem có đủ đặc trưng cần thiết không
+            if 'quantity' in selected_features and 'avg_rating' in selected_features:
+                # 1. Tính trung bình toàn cục
+                global_avgs = calculate_global_averages(df_processed, ['quantity', 'avg_rating'])
+                avg_qty_all = global_avgs['quantity']
+                avg_rating_all = global_avgs['avg_rating']
+                
+                st.info(f"📊 **Chỉ Số Trung Bình Toàn Dataset:** Lượng bán TB = {avg_qty_all:.1f} | Rating TB = {avg_rating_all:.2f}")
+                
+                # 2. Xác định cụm xu hướng
+                trend_cluster_id = identify_trend_cluster(df_processed, 'quantity')
+                cluster_avg_qty = df_processed.groupby('Cluster')['quantity'].mean()
+                
+                st.markdown("---")
+                
+                # 3. Lặp qua từng cụm và áp dụng logic gán nhãn
+                for cluster_id in sorted(df_processed['Cluster'].unique()):
+                    cluster_data = df_processed[df_processed['Cluster'] == cluster_id]
+                    
+                    # Tính thống kê cho cụm
+                    n_books = len(cluster_data)
+                    mean_qty = cluster_data['quantity'].mean()
+                    mean_rating = cluster_data['avg_rating'].mean()
+                    
+                    # Lấy nhãn và màu sắc
+                    label, label_color = get_cluster_label(
+                        cluster_id, trend_cluster_id, mean_qty, mean_rating,
+                        avg_qty_all, avg_rating_all
+                    )
+                    
+                    # Lấy thể loại chiếm ưu thế
+                    dominant_category, dominant_count, category_info = get_dominant_category(cluster_data, 'category')
+                    
+                    # Hiển thị bằng Streamlit expander
+                    with st.expander(f"**Cụm {cluster_id}:** {label}", expanded=(cluster_id == trend_cluster_id)):
+                        st.markdown(f"### <span style='color:{label_color}'>{label}</span>", unsafe_allow_html=True)
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric("📚 Số Lượng Sách", f"{n_books}")
+                        
+                        with col2:
+                            delta_qty = mean_qty - avg_qty_all
+                            st.metric(
+                                "📦 Trung Bình Bán",
+                                f"{mean_qty:.1f}",
+                                delta=f"{delta_qty:+.1f} so với TB chung",
+                                delta_color="normal"
+                            )
+                        
+                        with col3:
+                            delta_rating = mean_rating - avg_rating_all
+                            st.metric(
+                                "⭐ Trung Bình Rating",
+                                f"{mean_rating:.2f}",
+                                delta=f"{delta_rating:+.2f} so với TB chung",
+                                delta_color="normal"
+                            )
+                        
+                        st.markdown("**🏷️ Thể Loại Chủ Đạo:**")
+                        st.markdown(f"<h4>{category_info}</h4>", unsafe_allow_html=True)
+                        
+                        # Thống kê bổ sung
+                        st.markdown("**📊 Chi Tiết Các Chỉ Số:**")
+                        stats_df = get_cluster_feature_stats(cluster_data, selected_features)
+                        st.dataframe(stats_df, use_container_width=True, hide_index=True)
+                
+                # 5. Phần kết luận cuối cùng
+                st.markdown("---")
+                st.markdown("## 🏆 KẾT LUẬN CUỐI CÙNG")
+                
+                # Phân tích cụm xu hướng
+                trending_cluster_data = df_processed[df_processed['Cluster'] == trend_cluster_id]
+                
+                if 'category' in df_processed.columns:
+                    trending_category_counts = trending_cluster_data['category'].value_counts()
+                    top_category = trending_category_counts.index[0]
+                    top_category_count = trending_category_counts.values[0]
+                    total_in_trending = len(trending_cluster_data)
+                    percentage = (top_category_count / total_in_trending) * 100
+                    
+                    # Tạo hộp kết luận đẹp mắt
+                    st.markdown(f"""
+                    <div style='background-color: #002147; padding: 20px; border-radius: 10px; border-left: 5px solid #ff9800;'>
+                        <h3 style='color: #e65100; margin-top: 0;'>🔥 Phân Tích Xu Hướng Thị Trường</h3>
+                        <p style='font-size: 18px; line-height: 1.6;'>
+                            Dựa trên phân tích dữ liệu bán hàng, <b>Cụm {trend_cluster_id}</b> đã được xác định là 
+                            <b style='color: #d32f2f;'>NHÓM XU HƯỚNG</b> với lượng bán trung bình cao nhất 
+                            (<b>{cluster_avg_qty[trend_cluster_id]:.1f}</b> quyển/sách).
+                        </p>
+                        <p style='font-size: 20px; font-weight: bold; color: #1976d2; margin: 15px 0;'>
+                            📚 Thể loại đang là XU THẾ SỐ 1 trên sàn là: <span style='color: #c62828;'>{top_category.upper()}</span>
+                        </p>
+                        <p style='font-size: 16px;'>
+                            <b>Lý do:</b> Thể loại <b>{top_category}</b> chiếm <b style='color: #2e7d32;'>{percentage:.1f}%</b> 
+                            ({top_category_count}/{total_in_trending} quyển) trong nhóm bán chạy nhất, 
+                            với trung bình <b>{trending_cluster_data['quantity'].mean():.1f}</b> quyển được bán ra mỗi đầu sách.
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                else:
+                    st.warning("⚠️ Không tìm thấy cột 'category' trong dataset để phân tích xu hướng thể loại.")
+            else:
+                st.warning("⚠️ Cần có cả 'quantity' và 'avg_rating' trong các đặc trưng đã chọn để thực hiện phân tích tự động.")
             
             # ===========================
             # TẢI DỮ LIỆU KẾT QUẢ
@@ -341,8 +438,7 @@ if uploaded_file is not None:
             st.subheader("💾 Tải Kết Quả")
             
             # Chuẩn bị dữ liệu để tải xuống
-            result_df = df_processed.copy()
-            csv_data = result_df.to_csv(index=False).encode('utf-8')
+            csv_data = prepare_download_data(df_processed)
             
             st.download_button(
                 label="📥 Tải xuống dữ liệu đã phân cụm (CSV)",
@@ -357,7 +453,7 @@ if uploaded_file is not None:
         st.info("Vui lòng kiểm tra lại định dạng file CSV của bạn!")
 
 else:
-    # Hiển thị hướng dẫn khi chưa upload file
+    # Hiển thị hướng dẫn khi người dùng chưa upload file
     st.info("👈 Vui lòng tải lên file CSV từ sidebar để bắt đầu phân tích!")
     
     st.markdown("""
@@ -399,11 +495,10 @@ else:
     - Dữ liệu nên được làm sạch trước khi upload (hoặc app sẽ tự động xử lý giá trị thiếu)
     """)
     
-    # Footer
+    # Chân trang
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center'>
-        <p>Developed with ❤️ using Streamlit | K-Means Clustering Application</p>
+        <p>Developed with ❤️ | K-Means Clustering Application</p>
     </div>
     """, unsafe_allow_html=True)
-
