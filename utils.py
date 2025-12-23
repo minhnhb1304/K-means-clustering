@@ -1,319 +1,312 @@
+"""
+utils.py - Tầng Logic & AI Engine
+Chứa class BookClusteringAI để xử lý dữ liệu, huấn luyện mô hình và dự báo
+"""
+
 import streamlit as st
 import pandas as pd
 import numpy as np
+import joblib
+import os
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score
 
 
-# ===========================
-# TẢI VÀ TIỀN XỬ LÝ DỮ LIỆU
-# ===========================
-
-def load_data(uploaded_file):
+class BookClusteringAI:
     """
-    Tải dữ liệu từ file CSV đã upload.
+    Class AI để phân cụm và dự báo sách sử dụng K-Means Clustering.
+    """
     
-    Tham số:
-        uploaded_file: Đối tượng UploadedFile của Streamlit
+    def __init__(self):
+        """Khởi tạo BookClusteringAI"""
+        self.model = None
+        self.scaler = None
+        self.cluster_label_mapping = {}  # Mapping từ cluster_id -> label (Trend/Potential/Risk/Standard)
+        self.features = ['quantity', 'n_review', 'avg_rating']
+        self.model_path = 'kmeans_model.pkl'
+        self.scaler_path = 'scaler.pkl'
+        self.mapping_path = 'cluster_mapping.pkl'
+        self.df_processed = None
+        self.X_scaled = None
+    
+    def load_data(self, uploaded_file):
+        """
+        Tải dữ liệu từ file CSV.
         
-    Trả về:
-        pd.DataFrame: DataFrame đã tải
-    """
-    return pd.read_csv(uploaded_file)
-
-
-def get_numeric_columns(df):
-    """
-    Lấy tất cả các cột số từ dataframe.
+        Tham số:
+            uploaded_file: File upload từ Streamlit
+            
+        Trả về:
+            pd.DataFrame: DataFrame đã tải
+        """
+        return pd.read_csv(uploaded_file)
     
-    Tham số:
-        df: pandas DataFrame
+    def preprocess_data(self, df):
+        """
+        Tiền xử lý dữ liệu: loại bỏ NA và chuẩn hóa.
         
-    Trả về:
-        list: Danh sách tên các cột số
-    """
-    return df.select_dtypes(include=[np.number]).columns.tolist()
-
-
-def get_default_features(numeric_columns):
-    """
-    Lấy các đặc trưng mặc định để phân cụm (quantity, n_review, avg_rating nếu có).
-    
-    Tham số:
-        numeric_columns: Danh sách tên các cột số
+        Tham số:
+            df: pandas DataFrame
+            
+        Trả về:
+            tuple: (df_processed, X_scaled, scaler)
+        """
+        # Tạo bản sao
+        df_processed = df.copy()
         
-    Trả về:
-        list: Danh sách tên các đặc trưng mặc định
-    """
-    default_features = [col for col in ['quantity', 'n_review', 'avg_rating'] 
-                       if col in numeric_columns]
-    return default_features if default_features else numeric_columns[:3]
-
-
-def preprocess_data(df, selected_features):
-    """
-    Tiền xử lý dữ liệu: loại bỏ giá trị thiếu và chuẩn hóa đặc trưng.
-    
-    Tham số:
-        df: pandas DataFrame
-        selected_features: Danh sách tên đặc trưng để sử dụng
+        # Loại bỏ các dòng có giá trị thiếu trong các đặc trưng
+        df_processed = df_processed.dropna(subset=self.features)
         
-    Trả về:
-        tuple: (df_processed, X_scaled, scaler, df_scaled, rows_removed)
-    """
-    # Tạo bản sao
-    df_processed = df.copy()
-    
-    # Đếm số dòng trước khi xử lý
-    rows_before = df_processed.shape[0]
-    
-    # Loại bỏ các dòng có giá trị thiếu trong các đặc trưng đã chọn
-    df_processed = df_processed.dropna(subset=selected_features)
-    
-    # Tính số dòng đã loại bỏ
-    rows_removed = rows_before - df_processed.shape[0]
-    
-    # Chuẩn hóa dữ liệu
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(df_processed[selected_features])
-    
-    # Tạo dataframe đã chuẩn hóa để hiển thị
-    df_scaled = pd.DataFrame(
-        X_scaled,
-        columns=[f"{col}_scaled" for col in selected_features],
-        index=df_processed.index
-    )
-    
-    return df_processed, X_scaled, scaler, df_scaled, rows_removed
-
-
-# ===========================
-# PHƯƠNG PHÁP ELBOW VÀ ĐÁNH GIÁ
-# ===========================
-
-@st.cache_data
-def calculate_elbow_method(X_scaled, k_range=(1, 11)):
-    """
-    Tính toán inertia và silhouette scores cho các giá trị K khác nhau.
-    Được cache để cải thiện hiệu suất.
-    
-    Tham số:
-        X_scaled: Ma trận đặc trưng đã chuẩn hóa
-        k_range: Tuple của (min_k, max_k)
+        # Chuẩn hóa dữ liệu
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(df_processed[self.features])
         
-    Trả về:
-        tuple: (K_range, inertia_values, silhouette_scores)
-    """
-    inertia_values = []
-    silhouette_scores = []
-    K_range = range(k_range[0], k_range[1])
-    
-    for k in K_range:
-        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-        kmeans.fit(X_scaled)
-        inertia_values.append(kmeans.inertia_)
+        # Lưu vào instance
+        self.df_processed = df_processed
+        self.X_scaled = X_scaled
+        self.scaler = scaler
         
-        # Tính Silhouette Score (chỉ cho k >= 2)
-        if k >= 2:
-            score = silhouette_score(X_scaled, kmeans.labels_)
-            silhouette_scores.append(score)
-        else:
-            silhouette_scores.append(0)
+        return df_processed, X_scaled, scaler
     
-    return K_range, inertia_values, silhouette_scores
-
-
-# ===========================
-# PHÂN CỤM K-MEANS
-# ===========================
-
-def train_kmeans(X_scaled, n_clusters):
-    """
-    Huấn luyện mô hình K-Means và trả về dự đoán.
-    
-    Tham số:
-        X_scaled: Ma trận đặc trưng đã chuẩn hóa
-        n_clusters: Số lượng cụm
+    @st.cache_data
+    def calculate_elbow_method(_self, X_scaled, k_range=(1, 11)):
+        """
+        Tính toán inertia và silhouette scores cho các giá trị K.
+        Được cache để tối ưu hiệu suất.
         
-    Trả về:
-        tuple: (kmeans_model, cluster_labels)
-    """
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-    cluster_labels = kmeans.fit_predict(X_scaled)
-    
-    return kmeans, cluster_labels
-
-
-def add_cluster_labels_to_df(df, cluster_labels):
-    """
-    Thêm nhãn cụm vào dataframe.
-    
-    Tham số:
-        df: pandas DataFrame
-        cluster_labels: Mảng các nhãn cụm
+        Tham số:
+            X_scaled: Ma trận đặc trưng đã chuẩn hóa
+            k_range: Tuple của (min_k, max_k)
+            
+        Trả về:
+            tuple: (K_range, inertia_values, silhouette_scores)
+        """
+        inertia_values = []
+        silhouette_scores = []
+        K_range = range(k_range[0], k_range[1])
         
-    Trả về:
-        pd.DataFrame: DataFrame với cột 'Cluster'
-    """
-    df_copy = df.copy()
-    df_copy['Cluster'] = cluster_labels
-    df_copy['Cluster'] = df_copy['Cluster'].astype(str)
-    return df_copy
-
-
-def calculate_cluster_statistics(df_processed, selected_features):
-    """
-    Tính toán thống kê trung bình cho mỗi cụm.
-    
-    Tham số:
-        df_processed: DataFrame có nhãn cụm
-        selected_features: Danh sách đặc trưng để tính thống kê
+        for k in K_range:
+            kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+            kmeans.fit(X_scaled)
+            inertia_values.append(kmeans.inertia_)
+            
+            # Tính Silhouette Score (chỉ cho k >= 2)
+            if k >= 2:
+                score = silhouette_score(X_scaled, kmeans.labels_)
+                silhouette_scores.append(score)
+            else:
+                silhouette_scores.append(0)
         
-    Trả về:
-        pd.DataFrame: Thống kê theo từng cụm
-    """
-    cluster_stats = df_processed.groupby('Cluster')[selected_features].mean()
-    cluster_stats = cluster_stats.round(2)
-    return cluster_stats
-
-
-# ===========================
-# PHÂN TÍCH VÀ GÁN NHÃN CỤM
-# ===========================
-
-def calculate_global_averages(df, features):
-    """
-    Tính trung bình toàn cục cho các đặc trưng được chỉ định.
+        return K_range, inertia_values, silhouette_scores
     
-    Tham số:
-        df: pandas DataFrame
-        features: Danh sách tên đặc trưng
+    def train_model(self, X_scaled, n_clusters=4):
+        """
+        Huấn luyện mô hình K-Means và lưu vào file .pkl.
         
-    Trả về:
-        dict: Dictionary của feature: giá_trị_trung_bình
-    """
-    return {feature: df[feature].mean() for feature in features}
-
-
-def identify_trend_cluster(df_processed, quantity_col='quantity'):
-    """
-    Xác định cụm có lượng bán trung bình cao nhất (cụm xu hướng).
-    
-    Tham số:
-        df_processed: DataFrame có nhãn cụm
-        quantity_col: Tên cột quantity
+        Tham số:
+            X_scaled: Ma trận đặc trưng đã chuẩn hóa
+            n_clusters: Số lượng cụm (mặc định = 4)
+            
+        Trả về:
+            tuple: (kmeans_model, cluster_labels, df_with_clusters)
+        """
+        # Huấn luyện mô hình
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        cluster_labels = kmeans.fit_predict(X_scaled)
         
-    Trả về:
-        str: ID của cụm có lượng bán trung bình cao nhất
-    """
-    cluster_avg_qty = df_processed.groupby('Cluster')[quantity_col].mean()
-    return cluster_avg_qty.idxmax()
-
-
-def get_cluster_label(cluster_id, trend_cluster_id, mean_qty, mean_rating, 
-                     avg_qty_all, avg_rating_all):
-    """
-    Áp dụng logic gán nhãn để xác định nhãn và màu cho cụm.
-    
-    Tham số:
-        cluster_id: ID của cụm hiện tại
-        trend_cluster_id: ID của cụm xu hướng
-        mean_qty: Lượng bán trung bình của cụm hiện tại
-        mean_rating: Rating trung bình của cụm hiện tại
-        avg_qty_all: Lượng bán trung bình toàn cục
-        avg_rating_all: Rating trung bình toàn cục
+        # Lưu mô hình và scaler
+        self.model = kmeans
+        joblib.dump(kmeans, self.model_path)
+        joblib.dump(self.scaler, self.scaler_path)
         
-    Trả về:
-        tuple: (label, label_color)
-    """
-    if cluster_id == trend_cluster_id:
-        label = "🔥 NHÓM XU HƯỚNG (TRENDING - Bán Chạy Nhất)"
-        label_color = "#ff4b4b"
-    elif mean_qty < avg_qty_all and mean_rating >= avg_rating_all:
-        label = "💎 NHÓM TIỀM NĂNG (Bán ít nhưng Rating rất cao)"
-        label_color = "#00cc88"
-    elif mean_qty < avg_qty_all and mean_rating < avg_rating_all:
-        label = "⚠️ NHÓM CẦN CẢI THIỆN (Hiệu suất thấp)"
-        label_color = "#ffa500"
-    else:
-        label = "📚 NHÓM PHỔ THÔNG (Bán ổn định)"
-        label_color = "#0068c9"
-    
-    return label, label_color
-
-
-def get_dominant_category(cluster_data, category_col='category'):
-    """
-    Tìm thể loại chiếm ưu thế trong một cụm.
-    
-    Tham số:
-        cluster_data: DataFrame chứa dữ liệu cụm
-        category_col: Tên cột category
+        # Thêm nhãn cụm vào dataframe
+        df_with_clusters = self.df_processed.copy()
+        df_with_clusters['Cluster'] = cluster_labels
+        df_with_clusters['Cluster'] = df_with_clusters['Cluster'].astype(str)
         
-    Trả về:
-        tuple: (dominant_category, count, category_info_string) hoặc (None, 0, "N/A")
-    """
-    if category_col in cluster_data.columns:
-        category_counts = cluster_data[category_col].value_counts()
-        dominant_category = category_counts.index[0]
-        dominant_count = category_counts.values[0]
-        category_info = f"**{dominant_category}** ({dominant_count} sách)"
-        return dominant_category, dominant_count, category_info
-    else:
-        return None, 0, "N/A (không có cột category)"
-
-
-def get_cluster_feature_stats(cluster_data, selected_features):
-    """
-    Tính toán thống kê chi tiết cho các đặc trưng của cụm.
-    
-    Tham số:
-        cluster_data: DataFrame chứa dữ liệu cụm
-        selected_features: Danh sách tên đặc trưng
+        # Phân tích và gán nhãn động cho các cụm
+        self._analyze_and_label_clusters(df_with_clusters)
         
-    Trả về:
-        pd.DataFrame: DataFrame thống kê
-    """
-    stats_df = pd.DataFrame({
-        'Chỉ Số': selected_features,
-        'Giá Trị TB': [cluster_data[feat].mean() for feat in selected_features],
-        'Min': [cluster_data[feat].min() for feat in selected_features],
-        'Max': [cluster_data[feat].max() for feat in selected_features]
-    })
-    stats_df['Giá Trị TB'] = stats_df['Giá Trị TB'].round(2)
-    stats_df['Min'] = stats_df['Min'].round(2)
-    stats_df['Max'] = stats_df['Max'].round(2)
-    return stats_df
-
-
-def get_category_distribution(cluster_data, top_n=8, category_col='category'):
-    """
-    Lấy phân bố thể loại trong một cụm.
-    
-    Tham số:
-        cluster_data: DataFrame chứa dữ liệu cụm
-        top_n: Số lượng thể loại hàng đầu cần trả về
-        category_col: Tên cột category
+        # Lưu mapping
+        joblib.dump(self.cluster_label_mapping, self.mapping_path)
         
-    Trả về:
-        pd.Series: Số lượng theo thể loại (top_n thể loại)
-    """
-    if category_col in cluster_data.columns:
-        category_counts = cluster_data[category_col].value_counts()
-        return category_counts.head(min(top_n, len(category_counts)))
-    return None
-
-
-def prepare_download_data(df):
-    """
-    Chuẩn bị dữ liệu để tải xuống CSV.
+        return kmeans, cluster_labels, df_with_clusters
     
-    Tham số:
-        df: pandas DataFrame
+    def _analyze_and_label_clusters(self, df_with_clusters):
+        """
+        Phân tích các cụm và gán nhãn thông minh (Dynamic Labeling Logic).
         
-    Trả về:
-        bytes: Dữ liệu CSV đã mã hóa
-    """
-    return df.to_csv(index=False).encode('utf-8')
-
+        Tham số:
+            df_with_clusters: DataFrame có cột 'Cluster'
+        """
+        # Tính trung bình toàn cục
+        avg_qty_all = df_with_clusters['quantity'].mean()
+        avg_rating_all = df_with_clusters['avg_rating'].mean()
+        
+        # Tính trung bình theo cụm
+        cluster_stats = df_with_clusters.groupby('Cluster').agg({
+            'quantity': 'mean',
+            'avg_rating': 'mean'
+        })
+        
+        # Tìm cụm có lượng bán cao nhất -> 🔥 Xu Hướng (Best-Seller)
+        trend_cluster_id = cluster_stats['quantity'].idxmax()
+        
+        # Khởi tạo mapping
+        self.cluster_label_mapping = {}
+        
+        # Phân tích từng cụm
+        for cluster_id in sorted(df_with_clusters['Cluster'].unique()):
+            mean_qty = cluster_stats.loc[cluster_id, 'quantity']
+            mean_rating = cluster_stats.loc[cluster_id, 'avg_rating']
+            
+            # Logic gán nhãn 
+            if cluster_id == trend_cluster_id:
+                label = "🔥 Xu Hướng (Best-Seller)"
+            elif mean_qty < avg_qty_all and mean_rating >= avg_rating_all:
+                label = "💎 Tiềm Năng (Kén Khách)"
+            elif mean_qty < avg_qty_all and mean_rating < avg_rating_all:
+                label = "⚠️ Rủi Ro (Cần Cải Thiện)"
+            else:
+                label = "📚 Phổ Thông (Bán Ổn Định)"
+            
+            self.cluster_label_mapping[str(cluster_id)] = label
+    
+    def get_cluster_label_name(self, cluster_id):
+        """
+        Lấy tên nhãn của cụm từ cluster_id.
+        
+        Tham số:
+            cluster_id: ID cụm (string hoặc int)
+            
+        Trả về:
+            str: Tên nhãn (🔥 Xu Hướng / 💎 Tiềm Năng / ⚠️ Rủi Ro / 📚 Phổ Thông)
+        """
+        cluster_id_str = str(cluster_id)
+        return self.cluster_label_mapping.get(cluster_id_str, "Unknown")
+    
+    def load_saved_model(self):
+        """
+        Tải mô hình đã lưu từ file .pkl.
+        
+        Trả về:
+            bool: True nếu tải thành công, False nếu không
+        """
+        try:
+            if os.path.exists(self.model_path) and os.path.exists(self.scaler_path) and os.path.exists(self.mapping_path):
+                self.model = joblib.load(self.model_path)
+                self.scaler = joblib.load(self.scaler_path)
+                self.cluster_label_mapping = joblib.load(self.mapping_path)
+                return True
+            return False
+        except Exception as e:
+            st.error(f"Lỗi khi tải mô hình: {str(e)}")
+            return False
+    
+    def predict_new_book(self, quantity, n_review, rating):
+        """
+        Dự báo cụm cho một cuốn sách mới.
+        
+        Tham số:
+            quantity: Số lượng bán
+            n_review: Số lượng đánh giá
+            rating: Điểm đánh giá trung bình
+            
+        Trả về:
+            dict: {
+                'cluster_id': ID cụm,
+                'cluster_label': Tên nhãn cụm,
+                'manager_advice': Lời khuyên cho quản lý,
+                'marketing_action': Gợi ý Marketing & Bán hàng
+            }
+        """
+        # Kiểm tra xem mô hình đã được huấn luyện chưa
+        if self.model is None or self.scaler is None:
+            # Thử tải mô hình đã lưu
+            if not self.load_saved_model():
+                return {
+                    'error': 'Mô hình chưa được huấn luyện. Vui lòng huấn luyện mô hình ở Tab Dashboard trước.'
+                }
+        
+        # Chuẩn bị dữ liệu đầu vào (sử dụng DataFrame để tránh warning về feature names)
+        input_data = pd.DataFrame({
+            'quantity': [quantity],
+            'n_review': [n_review],
+            'avg_rating': [rating]
+        })
+        
+        # Chuẩn hóa
+        input_scaled = self.scaler.transform(input_data)
+        
+        # Dự báo
+        cluster_id = self.model.predict(input_scaled)[0]
+        cluster_id_str = str(cluster_id)
+        
+        # Lấy nhãn
+        cluster_label = self.get_cluster_label_name(cluster_id_str)
+        
+        # Tạo lời khuyên dựa trên nhãn cụm
+        advice = self._get_business_advice(cluster_label)
+        
+        return {
+            'cluster_id': cluster_id_str,
+            'cluster_label': cluster_label,
+            'manager_advice': advice['manager'],
+            'marketing_action': advice['marketing']
+        }
+    
+    def _get_business_advice(self, cluster_label):
+        """
+        Tạo lời khuyên kinh doanh dựa trên nhãn cụm.
+        
+        Tham số:
+            cluster_label: Tên nhãn cụm (tiếng Việt)
+            
+        Trả về:
+            dict: {'manager': lời khuyên cho quản lý, 'marketing': gợi ý marketing & bán hàng}
+        """
+        advice_map = {
+            "🔥 Xu Hướng (Best-Seller)": {
+                "manager": "Nhập số lượng lớn. Đảm bảo tồn kho > 500 cuốn.",
+                "marketing": "Ưu tiên trưng bày tại trang chủ/kệ Hot. Chạy Ads ngân sách cao."
+            },
+            "💎 Tiềm Năng (Kén Khách)": {
+                "manager": "Nhập số lượng vừa phải. Theo dõi kỹ review.",
+                "marketing": "Viết content review sâu sắc. Target nhóm khách hàng chuyên biệt."
+            },
+            "⚠️ Rủi Ro (Cần Cải Thiện)": {
+                "manager": "Hạn chế nhập thêm. Cân nhắc xả hàng.",
+                "marketing": "Tạo Flash Sale giảm giá sâu để đẩy hàng tồn."
+            },
+            "📚 Phổ Thông (Bán Ổn Định)": {
+                "manager": "Duy trì mức nhập trung bình.",
+                "marketing": "Bán kèm combo khuyến mãi. Phù hợp bán trên sàn TMĐT."
+            }
+        }
+        
+        return advice_map.get(cluster_label, {
+            "manager": "Chưa có dữ liệu đủ để đưa ra lời khuyên.",
+            "marketing": "Chưa có gợi ý marketing cụ thể."
+        })
+    
+    def get_cluster_statistics(self, df_with_clusters):
+        """
+        Tính toán thống kê theo cụm.
+        
+        Tham số:
+            df_with_clusters: DataFrame có cột 'Cluster'
+            
+        Trả về:
+            pd.DataFrame: Thống kê theo cụm với tên nhãn
+        """
+        stats = df_with_clusters.groupby('Cluster')[self.features].mean()
+        stats = stats.round(2)
+        
+        # Thêm cột nhãn
+        stats['Nhãn Cụm'] = [self.get_cluster_label_name(cluster_id) for cluster_id in stats.index]
+        
+        # Đổi tên cột sang tiếng Việt
+        stats.columns = ['Số lượng bán TB', 'Số đánh giá TB', 'Rating TB', 'Nhãn Cụm']
+        
+        return stats
