@@ -1,8 +1,3 @@
-"""
-utils.py - Tầng Logic & AI Engine
-Chứa class BookClusteringAI để xử lý dữ liệu, huấn luyện mô hình và dự báo
-"""
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -31,27 +26,9 @@ class BookClusteringAI:
         self.X_scaled = None
     
     def load_data(self, uploaded_file):
-        """
-        Tải dữ liệu từ file CSV.
-        
-        Tham số:
-            uploaded_file: File upload từ Streamlit
-            
-        Trả về:
-            pd.DataFrame: DataFrame đã tải
-        """
         return pd.read_csv(uploaded_file)
     
     def preprocess_data(self, df):
-        """
-        Tiền xử lý dữ liệu: loại bỏ NA và chuẩn hóa.
-        
-        Tham số:
-            df: pandas DataFrame
-            
-        Trả về:
-            tuple: (df_processed, X_scaled, scaler)
-        """
         # Tạo bản sao
         df_processed = df.copy()
         
@@ -74,13 +51,6 @@ class BookClusteringAI:
         """
         Tính toán inertia và silhouette scores cho các giá trị K.
         Được cache để tối ưu hiệu suất.
-        
-        Tham số:
-            X_scaled: Ma trận đặc trưng đã chuẩn hóa
-            k_range: Tuple của (min_k, max_k)
-            
-        Trả về:
-            tuple: (K_range, inertia_values, silhouette_scores)
         """
         inertia_values = []
         silhouette_scores = []
@@ -101,16 +71,8 @@ class BookClusteringAI:
         return K_range, inertia_values, silhouette_scores
     
     def train_model(self, X_scaled, n_clusters=4):
-        """
-        Huấn luyện mô hình K-Means và lưu vào file .pkl.
-        
-        Tham số:
-            X_scaled: Ma trận đặc trưng đã chuẩn hóa
-            n_clusters: Số lượng cụm (mặc định = 4)
-            
-        Trả về:
-            tuple: (kmeans_model, cluster_labels, df_with_clusters)
-        """
+        # Huấn luyện mô hình K-Means và lưu vào file .pkl.
+
         # Huấn luyện mô hình
         kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
         cluster_labels = kmeans.fit_predict(X_scaled)
@@ -134,12 +96,8 @@ class BookClusteringAI:
         return kmeans, cluster_labels, df_with_clusters
     
     def _analyze_and_label_clusters(self, df_with_clusters):
-        """
-        Phân tích các cụm và gán nhãn thông minh (Dynamic Labeling Logic).
+        # Phân tích các cụm và gán nhãn thông minh (Dynamic Labeling Logic).
         
-        Tham số:
-            df_with_clusters: DataFrame có cột 'Cluster'
-        """
         # Tính trung bình toàn cục
         avg_qty_all = df_with_clusters['quantity'].mean()
         avg_rating_all = df_with_clusters['avg_rating'].mean()
@@ -150,7 +108,7 @@ class BookClusteringAI:
             'avg_rating': 'mean'
         })
         
-        # Tìm cụm có lượng bán cao nhất -> 🔥 Xu Hướng (Best-Seller)
+        # Tìm cụm có lượng bán cao nhất -> Xu Hướng
         trend_cluster_id = cluster_stats['quantity'].idxmax()
         
         # Khởi tạo mapping
@@ -174,25 +132,12 @@ class BookClusteringAI:
             self.cluster_label_mapping[str(cluster_id)] = label
     
     def get_cluster_label_name(self, cluster_id):
-        """
-        Lấy tên nhãn của cụm từ cluster_id.
-        
-        Tham số:
-            cluster_id: ID cụm (string hoặc int)
-            
-        Trả về:
-            str: Tên nhãn (🔥 Xu Hướng / 💎 Tiềm Năng / ⚠️ Rủi Ro / 📚 Phổ Thông)
-        """
+        # Lấy tên nhãn của cụm từ cluster_id.
+
         cluster_id_str = str(cluster_id)
         return self.cluster_label_mapping.get(cluster_id_str, "Unknown")
     
     def load_saved_model(self):
-        """
-        Tải mô hình đã lưu từ file .pkl.
-        
-        Trả về:
-            bool: True nếu tải thành công, False nếu không
-        """
         try:
             if os.path.exists(self.model_path) and os.path.exists(self.scaler_path) and os.path.exists(self.mapping_path):
                 self.model = joblib.load(self.model_path)
@@ -205,22 +150,6 @@ class BookClusteringAI:
             return False
     
     def predict_new_book(self, quantity, n_review, rating):
-        """
-        Dự báo cụm cho một cuốn sách mới.
-        
-        Tham số:
-            quantity: Số lượng bán
-            n_review: Số lượng đánh giá
-            rating: Điểm đánh giá trung bình
-            
-        Trả về:
-            dict: {
-                'cluster_id': ID cụm,
-                'cluster_label': Tên nhãn cụm,
-                'manager_advice': Lời khuyên cho quản lý,
-                'marketing_action': Gợi ý Marketing & Bán hàng
-            }
-        """
         # Kiểm tra xem mô hình đã được huấn luyện chưa
         if self.model is None or self.scaler is None:
             # Thử tải mô hình đã lưu
@@ -257,15 +186,7 @@ class BookClusteringAI:
         }
     
     def _get_business_advice(self, cluster_label):
-        """
-        Tạo lời khuyên kinh doanh dựa trên nhãn cụm.
-        
-        Tham số:
-            cluster_label: Tên nhãn cụm (tiếng Việt)
-            
-        Trả về:
-            dict: {'manager': lời khuyên cho quản lý, 'marketing': gợi ý marketing & bán hàng}
-        """
+        # Lời khuyên kinh doanh dựa trên nhãn cụm.
         advice_map = {
             "🔥 Xu Hướng (Best-Seller)": {
                 "manager": "Nhập số lượng lớn. Đảm bảo tồn kho > 500 cuốn.",
@@ -291,15 +212,8 @@ class BookClusteringAI:
         })
     
     def get_cluster_statistics(self, df_with_clusters):
-        """
-        Tính toán thống kê theo cụm.
-        
-        Tham số:
-            df_with_clusters: DataFrame có cột 'Cluster'
-            
-        Trả về:
-            pd.DataFrame: Thống kê theo cụm với tên nhãn
-        """
+        # Tính toán thống kê theo cụm.
+
         stats = df_with_clusters.groupby('Cluster')[self.features].mean()
         stats = stats.round(2)
         

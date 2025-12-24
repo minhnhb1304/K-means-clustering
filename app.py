@@ -1,7 +1,3 @@
-"""
-app.py - Giao diện Streamlit cho Ứng dụng AI Phân Cụm Sách
-"""
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
