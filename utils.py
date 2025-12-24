@@ -214,13 +214,38 @@ class BookClusteringAI:
     def get_cluster_statistics(self, df_with_clusters):
         # Tính toán thống kê theo cụm.
 
+        # Tính toán các metrics trung bình
         stats = df_with_clusters.groupby('Cluster')[self.features].mean()
         stats = stats.round(2)
+        
+        # Thêm Count (số lượng sách trong mỗi cụm)
+        cluster_counts = df_with_clusters.groupby('Cluster').size()
+        stats['Count'] = cluster_counts
+        
+        # Thêm Percentage (phần trăm của tổng dataset)
+        total_count = len(df_with_clusters)
+        stats['Percentage'] = (cluster_counts / total_count * 100).round(2)
         
         # Thêm cột nhãn
         stats['Nhãn Cụm'] = [self.get_cluster_label_name(cluster_id) for cluster_id in stats.index]
         
+        # Thêm Top 3 Thể loại nếu có cột category
+        if 'category' in df_with_clusters.columns:
+            top3_categories = df_with_clusters.groupby('Cluster')['category'].apply(
+                lambda x: ", ".join(x.value_counts().head(3).index.astype(str))
+            )
+            stats['Top 3 Thể loại'] = top3_categories
+        else:
+            stats['Top 3 Thể loại'] = "N/A"
+        
         # Đổi tên cột sang tiếng Việt
-        stats.columns = ['Số lượng bán TB', 'Số đánh giá TB', 'Rating TB', 'Nhãn Cụm']
+        stats = stats.rename(columns={
+            'quantity': 'Số lượng bán TB',
+            'n_review': 'Số đánh giá TB',
+            'avg_rating': 'Rating TB'
+        })
+        
+        # Đảm bảo thứ tự cột: Count, Percentage, Số lượng bán TB, Số đánh giá TB, Rating TB, Nhãn Cụm, Top 3 Thể loại
+        stats = stats[['Count', 'Percentage', 'Số lượng bán TB', 'Số đánh giá TB', 'Rating TB', 'Nhãn Cụm', 'Top 3 Thể loại']]
         
         return stats

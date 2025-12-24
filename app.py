@@ -296,6 +296,48 @@ with tab1:
                         mime="text/csv",
                         help="Tải về file CSV chứa dữ liệu gốc kèm theo nhãn cụm"
                     )
+                    
+                    # ===========================
+                    # SECTION 5: TỔNG HỢP & PHÂN TÍCH ĐẶC ĐIỂM NHÓM
+                    # ===========================
+                    st.markdown("---")
+                    st.header("5️⃣ Tổng Hợp & Phân Tích Đặc Điểm Nhóm")
+                    
+                    # Hiển thị các card cho từng cụm với focus vào dữ liệu
+                    for idx, row in cluster_stats.iterrows():
+                        cluster_label = row['Nhãn Cụm']
+                        count = int(row['Count'])
+                        percentage = row['Percentage']
+                        avg_qty = row['Số lượng bán TB']
+                        avg_review = row['Số đánh giá TB']
+                        avg_rating = row['Rating TB']
+                        top3_categories = row.get('Top 3 Thể loại', 'N/A')
+                        
+                        # Xác định màu sắc dựa trên loại cụm
+                        if "Xu Hướng" in cluster_label:
+                            box_type = "success"
+                        elif "Tiềm Năng" in cluster_label:
+                            box_type = "info"
+                        elif "Rủi Ro" in cluster_label:
+                            box_type = "warning"
+                        elif "Phổ Thông" in cluster_label:
+                            box_type = "info"
+                        else:
+                            box_type = "info"
+                        
+                        # Tạo nội dung card với focus vào dữ liệu định lượng
+                        card_content = f"**Nhóm: {cluster_label}**\n\n"
+                        card_content += f"**Quy mô nhóm:** {count:,} đầu sách (Chiếm {percentage}% kho dữ liệu).\n\n"
+                        card_content += f"**Hiệu suất bán:** Trung bình bán {avg_qty:,.0f} cuốn | {avg_review:,.0f} lượt đánh giá.\n\n"
+                        card_content += f"**Chất lượng:** Điểm đánh giá trung bình {avg_rating:.1f}/5.0.\n\n"
+                        card_content += f"**Phân loại chủ đạo:** {top3_categories}."
+                        
+                        if box_type == "success":
+                            st.success(card_content)
+                        elif box_type == "warning":
+                            st.warning(card_content)
+                        else:
+                            st.info(card_content)
                 else:
                     st.info("👆 Nhấn nút 'Huấn Luyện Mô Hình' để bắt đầu phân cụm!")
         
